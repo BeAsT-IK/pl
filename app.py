@@ -22,7 +22,10 @@ def full_stripe_check(cc, mm, yy, cvv):
         login_page_res = session.get('https://www.bsdcorp.org/donate/')
         login_nonce_match = re.search(r'name="woocommerce-register-nonce" value="(.*?)"', login_page_res.text)
         if not login_nonce_match:
-            return {"status": "Declined", "response": "Failed to get login nonce.", "decline_type": "process_error"}
+            # Try alternative nonce pattern
+            login_nonce_match = re.search(r'"woocommerce-register-nonce":"(.*?)"', login_page_res.text)
+            if not login_nonce_match:
+                return {"status": "Declined", "response": "Failed to get login nonce. Page structure may be different.", "decline_type": "process_error", "debug": login_page_res.status_code}
         login_nonce = login_nonce_match.group(1)
 
         # Step 3: Register a new account for a valid session
