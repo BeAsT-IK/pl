@@ -14,41 +14,49 @@ def full_stripe_check(cc, mm, yy, cvv):
         yy = yy[-2:]
 
     try:
-        # Direct Stripe v1/tokens - No website dependency
-        stripe_data = {
-            'card[number]': cc,
-            'card[exp_month]': mm,
-            'card[exp_year]': yy,
-            'card[cvc]': cvv,
-            'key': 'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy'
-        }
+        # Try multiple Stripe keys
+        stripe_keys = [
+            'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy',
+            'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy',
+        ]
         
-        stripe_response = session.post('https://api.stripe.com/v1/tokens', data=stripe_data, timeout=15)
-        
-        # Success - Card accepted
-        if stripe_response.status_code == 200:
-            return {"status": "Approved", "response": "Card accepted", "decline_type": "none"}
-        
-        # Card declined
-        elif stripe_response.status_code == 402:
-            error = stripe_response.json().get('error', {})
-            return {
-                "status": "Declined",
-                "response": error.get('message', 'Card declined'),
-                "decline_type": error.get('code', 'card_decline')
+        for stripe_key in stripe_keys:
+            stripe_data = {
+                'card[number]': cc,
+                'card[exp_month]': mm,
+                'card[exp_year]': yy,
+                'card[cvc]': cvv,
+                'key': stripe_key
             }
+            
+            stripe_response = session.post('https://api.stripe.com/v1/tokens', data=stripe_data, timeout=15)
+            
+            # Success - Card accepted
+            if stripe_response.status_code == 200:
+                return {"status": "Approved", "response": "Card accepted", "decline_type": "none"}
+            
+            # Card declined
+            elif stripe_response.status_code == 402:
+                error = stripe_response.json().get('error', {})
+                return {
+                    "status": "Declined",
+                    "response": error.get('message', 'Card declined'),
+                    "decline_type": error.get('code', 'card_decline')
+                }
+            
+            # Invalid card format
+            elif stripe_response.status_code == 400:
+                error = stripe_response.json().get('error', {})
+                # Check if it's a key restriction issue
+                if 'unsupported' in error.get('message', '').lower() or 'surface' in error.get('message', '').lower():
+                    continue  # Try next key
+                return {
+                    "status": "Declined",
+                    "response": error.get('message', 'Invalid card'),
+                    "decline_type": error.get('code', 'invalid_card')
+                }
         
-        # Invalid card format
-        elif stripe_response.status_code == 400:
-            error = stripe_response.json().get('error', {})
-            return {
-                "status": "Declined",
-                "response": error.get('message', 'Invalid card'),
-                "decline_type": error.get('code', 'invalid_card')
-            }
-        
-        else:
-            return {"status": "Declined", "response": "Error from payment processor", "decline_type": "process_error"}
+        return {"status": "Declined", "response": "Card validation failed", "decline_type": "process_error"}
     
     except Exception as e:
         return {"status": "Declined", "response": str(e), "decline_type": "process_error"}
