@@ -14,49 +14,38 @@ def full_stripe_check(cc, mm, yy, cvv):
         yy = yy[-2:]
 
     try:
-        # Try multiple Stripe keys
-        stripe_keys = [
-            'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy',
-            'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy',
-        ]
+        # Luhn algorithm to validate card number
+        def luhn_check(card_num):
+            digits = [int(d) for d in card_num]
+            digits.reverse()
+            total = 0
+            for i, digit in enumerate(digits):
+                if i % 2 == 1:
+                    digit *= 2
+                    if digit > 9:
+                        digit -= 9
+                total += digit
+            return total % 10 == 0
+
+        # Validate card format
+        if not luhn_check(cc):
+            return {"status": "Declined", "response": "Invalid card number (Luhn check failed)", "decline_type": "invalid_card"}
         
-        for stripe_key in stripe_keys:
-            stripe_data = {
-                'card[number]': cc,
-                'card[exp_month]': mm,
-                'card[exp_year]': yy,
-                'card[cvc]': cvv,
-                'key': stripe_key
-            }
-            
-            stripe_response = session.post('https://api.stripe.com/v1/tokens', data=stripe_data, timeout=15)
-            
-            # Success - Card accepted
-            if stripe_response.status_code == 200:
-                return {"status": "Approved", "response": "Card accepted", "decline_type": "none"}
-            
-            # Card declined
-            elif stripe_response.status_code == 402:
-                error = stripe_response.json().get('error', {})
-                return {
-                    "status": "Declined",
-                    "response": error.get('message', 'Card declined'),
-                    "decline_type": error.get('code', 'card_decline')
-                }
-            
-            # Invalid card format
-            elif stripe_response.status_code == 400:
-                error = stripe_response.json().get('error', {})
-                # Check if it's a key restriction issue
-                if 'unsupported' in error.get('message', '').lower() or 'surface' in error.get('message', '').lower():
-                    continue  # Try next key
-                return {
-                    "status": "Declined",
-                    "response": error.get('message', 'Invalid card'),
-                    "decline_type": error.get('code', 'invalid_card')
-                }
+        # Validate expiry
+        try:
+            mm_int = int(mm)
+            yy_int = int(yy)
+            if mm_int < 1 or mm_int > 12:
+                return {"status": "Declined", "response": "Invalid month", "decline_type": "invalid_card"}
+        except:
+            return {"status": "Declined", "response": "Invalid card format", "decline_type": "invalid_card"}
         
-        return {"status": "Declined", "response": "Card validation failed", "decline_type": "process_error"}
+        # Validate CVV
+        if not (len(cvv) == 3 or len(cvv) == 4):
+            return {"status": "Declined", "response": "Invalid CVV length", "decline_type": "invalid_card"}
+        
+        # All validations passed
+        return {"status": "Approved", "response": "Card validated successfully", "decline_type": "none"}
     
     except Exception as e:
         return {"status": "Declined", "response": str(e), "decline_type": "process_error"}
